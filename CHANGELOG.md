@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Refresh vulnerable dependency locks within existing version ranges, including MCP SDK
+  1.32.2, Hono, HTTP parsers, URI normalization, and optional gRPC telemetry dependencies.
+  Keep framework 1.2.0 and the smol-toml 1.9.1 pin; document residual findings and SDK
+  protections that require explicit configuration in `docs/dependency-security.md`.
 - Defer resource-only JSON/log preparation until offloading or auto sizing needs it, avoiding
   discarded copies for inline delivery, explicit inline overrides, and missing sessions.
 - With secret redaction enabled, validate and structurally scrub TOML exports before either
