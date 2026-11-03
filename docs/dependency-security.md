@@ -5,6 +5,11 @@ Base: PR #1, `feat/adaptive-resource-responses`, commit
 adds SDK compatibility tests, and documents findings. Application implementation,
 schemas, permissions, approval policy, transport configuration, and deployment are unchanged.
 
+Follow-up: [Zod / stdio input-budget evaluation](zod-security-evaluation.md)
+investigates the residual Zod finding, records demonstrated v4 incompatibilities,
+and recommends upstream framework/SDK changes. It adds no runtime mitigation;
+the historical dependency-update results below remain unchanged.
+
 ## Locked updates
 
 All updates satisfy the existing parent dependency ranges. `package.json` and its
