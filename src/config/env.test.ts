@@ -154,7 +154,14 @@ test("invalid resource delivery settings in a config file fail startup with the 
     });
     assert.equal(result.error, undefined);
     assert.equal(result.status, 1, `${setting}: ${result.stderr}`);
-    assert.ok(result.stderr.includes(key), `${setting}: missing validation key in ${result.stderr}`);
+    // smol-toml 1.9.1 rejects unsafe integers before schema validation can name a key.
+    const parserRejectedUnsafeInteger =
+      setting === "inline_threshold_bytes = 9007199254740992" &&
+      result.stderr.includes("integer value cannot be represented losslessly");
+    assert.ok(
+      result.stderr.includes(key) || parserRejectedUnsafeInteger,
+      `${setting}: missing validation key in ${result.stderr}`,
+    );
   }
 });
 

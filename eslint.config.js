@@ -109,7 +109,7 @@ export default [
   // intentionally fire-and-forget (the test runner awaits them internally), and `as any`
   // casts on assertion results are acceptable for brevity.
   {
-    files: ["**/__tests__/**/*.ts"],
+    files: ["**/__tests__/**/*.ts", "**/*.test.ts"],
     rules: {
       "@typescript-eslint/no-floating-promises": "off",
       "@typescript-eslint/no-explicit-any": "off",

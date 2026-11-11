@@ -52,7 +52,7 @@ const resourceInlineThresholdSchema = z
       .transform(Number),
     z.number(),
   ])
-  .pipe(z.number().int().positive().safe());
+  .pipe(z.number().int().positive());
 
 export const appEnvSchema = z.object({
   // ── Komodo Core connection ────────────────────────────────────────────────
@@ -372,7 +372,7 @@ const resourcesConfigFileSchema = z.object({
   /** Delivery policy for offload-capable tools. Env: MCP_RESOURCE_RESPONSE_MODE */
   response_mode: z.enum(["link", "inline", "auto"]).optional(),
   /** Inclusive auto-mode threshold in UTF-8 bytes. Env: MCP_RESOURCE_INLINE_THRESHOLD_BYTES */
-  inline_threshold_bytes: z.number().int().positive().safe().optional(),
+  inline_threshold_bytes: z.number().int().positive().optional(),
   /** TTL for info/inspect resources as duration ('15m') or ms. Env: MCP_RESOURCE_TTL_INFO */
   ttl_info: z.union([z.number().int().positive(), z.string()]).optional(),
   /** TTL for log resources as duration ('2m') or ms. Env: MCP_RESOURCE_TTL_LOGS */

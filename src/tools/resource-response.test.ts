@@ -386,7 +386,7 @@ test("adaptive delivery preserves complete, redacted tool results across the MCP
     st.mock.method(registry, "register", () => {
       throw new Error("registration scrub failed");
     });
-    st.mock.method(resultScrubber, "scrubObject", () => {
+    st.mock.method(resultScrubber, "scrubStructured", () => {
       throw new Error("boundary scrub failed");
     });
     const response = await client.callTool({ name: getStackInfoTool.name, arguments: { stack: "test-stack" } });
