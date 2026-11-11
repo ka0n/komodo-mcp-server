@@ -21,7 +21,7 @@
  * @module tools/toml
  */
 
-import { defineTool, structured, type ToolResultFor } from "mcp-server-framework";
+import { defineTool, structured, getDynamicResourceRegistry, type ToolResultFor } from "mcp-server-framework";
 import { createSecretScrubber, scrubByMimeType } from "mcp-server-framework/logger";
 import type { Types } from "komodo_client";
 import { ToolCategories, ToolScopes, config } from "../config/index.js";
@@ -76,7 +76,10 @@ function buildTomlResult(
     : null;
 
   if (link) {
-    const summary = { bytes: Buffer.byteLength(toml, "utf8"), secrets_masked: scrubConfig !== false };
+    // Registration may redact and re-serialize the export. Count the stored bytes
+    // that resources/read will deliver, rather than the raw Komodo response.
+    const delivered = getDynamicResourceRegistry().read(link.uri, sessionId).content;
+    const summary = { bytes: Buffer.byteLength(delivered), secrets_masked: scrubConfig !== false };
     const payload = { summary, resourceLink: link };
     return structured(payload, { text: renderTomlExport(payload), links: [link] });
   }
