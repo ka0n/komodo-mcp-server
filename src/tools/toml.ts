@@ -59,10 +59,11 @@ function buildTomlResult(
 ): ToolResultFor<typeof tomlOutputSchema> {
   if (typeof toml !== "string") return error("TOML export withheld: invalid export payload.");
   const scrubConfig = resolveScrubOptions();
+  let scrubber: ReturnType<typeof createSecretScrubber>;
   let content = toml;
   if (scrubConfig !== false) {
     try {
-      const scrubber = createSecretScrubber(scrubConfig);
+      scrubber = createSecretScrubber(scrubConfig);
       if (!scrubber) throw new Error("Missing export scrubber");
       content = stringifyToml(scrubber.scrubObject(parseToml(toml)));
       parseToml(content); // Validate the actual serialized export, not just its MIME type.
@@ -92,7 +93,22 @@ function buildTomlResult(
   }
 
   const payload = { summary, toml: content };
-  return structured(payload, { text: renderTomlExport(payload) });
+  const text = renderTomlExport(payload);
+  if (scrubber) {
+    try {
+      // Framework 1.3 scrubs serialized strings as generic text at the result
+      // boundary. Escaped TOML quotes can be damaged even after structural
+      // redaction. Only deliver representations already stable under that pass.
+      // This is a rejection guard, never a scrub exemption or a format repair.
+      const checked = scrubber.scrubStructured(payload) as typeof payload;
+      if (checked.toml !== content || scrubber.scrub(text) !== text) {
+        return error("TOML export withheld: inline serialization is not stable under secret redaction.");
+      }
+    } catch {
+      return error("TOML export withheld: inline serialization validation failed.");
+    }
+  }
+  return structured(payload, { text });
 }
 
 export const exportAllResourcesToTomlTool = defineTool({
@@ -102,6 +118,7 @@ export const exportAllResourcesToTomlTool = defineTool({
     "When secret scrubbing is enabled, secret values (variable values, server passkeys, alerter webhook URLs) are redacted, " +
     "so the export is for inspection and diffing, not for re-applying verbatim via ResourceSync. " +
     "When scrubbing is explicitly disabled, the export may contain unmasked credentials. " +
+    "Inline exports that cannot survive central secret redaction intact are withheld with an explicit error. " +
     RESOURCE_DELIVERY_DESCRIPTION,
   input: tomlExportAllInputSchema.extend(inlineFullInputSchema.shape),
   output: tomlOutputSchema,
@@ -139,6 +156,7 @@ export const exportResourcesToTomlTool = defineTool({
     "When secret scrubbing is enabled, secret values are redacted, so the export is for inspection and diffing, " +
     "not for re-applying verbatim via ResourceSync. " +
     "When scrubbing is explicitly disabled, the export may contain unmasked credentials. " +
+    "Inline exports that cannot survive central secret redaction intact are withheld with an explicit error. " +
     RESOURCE_DELIVERY_DESCRIPTION,
   input: tomlExportResourcesInputSchema.extend(inlineFullInputSchema.shape),
   output: tomlOutputSchema,
