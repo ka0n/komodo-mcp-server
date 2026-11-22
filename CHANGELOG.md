@@ -140,6 +140,7 @@ with authentication switched off behave as in 1.5.0.
 ### Fixed
 
 - **Builder lists include all visible builders** (follow-up to #174). The tool reports the full count and keeps its existing cursors on Komodo Core 2.3 and later.
+- **Server shell calls use isolated terminals by default** (#229). Silent server commands now time out after five minutes. An explicit terminal name keeps a shared, persistent shell.
 
 - **Clients that authenticate with HTTP Basic are served everywhere.** The token endpoint accepted
   `client_id`/`client_secret` in the `Authorization` header only for client credentials, and did
