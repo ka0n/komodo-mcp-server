@@ -15,8 +15,8 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { ToolCategories, ToolScopes, config } from "../config/index.js";
-import { AppErrorFactory } from "../errors/index.js";
+import { RESOURCE_DELIVERY_DESCRIPTION, ToolCategories, ToolScopes, config } from "../config/index.js";
+import { ValidationError } from "../errors/index.js";
 import {
   requireClient,
   requireKomodoPermission,
@@ -93,12 +93,13 @@ export const listProceduresTool = defineTool({
 
 export const getProcedureInfoTool = defineTool({
   name: "komodo_procedure_info",
-  description: "Get the full Komodo Procedure resource (configuration, stages, schedule).",
+  description:
+    "Get the full Komodo Procedure resource (configuration, stages, schedule)." + RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       procedure: procedureIdSchema.describe("Procedure id or name"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: procedureInfoOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.PROCEDURE },
@@ -187,7 +188,7 @@ export const applyProcedureTool = defineTool({
     const komodo = requireClient();
     if (args.action === "create") {
       requireKomodoCreatePermission("Procedure");
-      if (!args.name) throw AppErrorFactory.validation.fieldRequired("name");
+      if (!args.name) throw ValidationError.fieldRequired("name");
       const name = args.name;
       const result = await wrapApiCall(
         "createProcedure",
@@ -202,7 +203,7 @@ export const applyProcedureTool = defineTool({
       const built = buildApplyResult("create", "procedure", name, result);
       return structured(built.payload, { text: built.text });
     }
-    if (!args.procedure) throw AppErrorFactory.validation.fieldRequired("procedure");
+    if (!args.procedure) throw ValidationError.fieldRequired("procedure");
     await requireKomodoPermission({ type: "Procedure", id: args.procedure }, Types.PermissionLevel.Write);
     const procedureId = args.procedure;
     const result = await wrapApiCall(

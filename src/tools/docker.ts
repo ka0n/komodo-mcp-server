@@ -16,7 +16,13 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { PARAM_DESCRIPTIONS, ToolCategories, ToolScopes, config } from "../config/index.js";
+import {
+  RESOURCE_DELIVERY_DESCRIPTION,
+  PARAM_DESCRIPTIONS,
+  ToolCategories,
+  ToolScopes,
+  config,
+} from "../config/index.js";
 import {
   requireClient,
   requireKomodoPermission,
@@ -30,6 +36,7 @@ import {
   renderNetworkInspect,
   renderVolumeList,
   renderVolumeInspect,
+  komodoObject,
 } from "../utils/index.js";
 import {
   serverIdSchema,
@@ -73,7 +80,7 @@ export const listDockerImagesTool = defineTool({
   description: "List Docker images cached locally on a server, with size and in-use status.",
   input: z
     .object({ server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_REQUIRED) })
-    .merge(paginationInputSchema),
+    .extend(paginationInputSchema.shape),
   output: imageListOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.DOCKER },
@@ -101,13 +108,15 @@ export const listDockerImagesTool = defineTool({
 
 export const inspectDockerImageTool = defineTool({
   name: "komodo_docker_image_inspect",
-  description: "Get detailed Docker inspect data for an image (config, layers, exposed ports, env, labels).",
+  description:
+    "Get detailed Docker inspect data for an image (config, layers, exposed ports, env, labels)." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_REQUIRED),
       image: z.string().min(1).describe("Image name or ID to inspect"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: imageInspectOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.DOCKER },
@@ -132,25 +141,27 @@ export const inspectDockerImageTool = defineTool({
       category: "inspect",
       name: `${args.image} (inspect)`,
       mimeType: "application/json",
-      content: JSON.stringify(result, null, 2),
+      content: () => JSON.stringify(result, null, 2),
       ttlMs: config.MCP_RESOURCE_TTL_INFO,
       inlineFull: args.inline_full,
       description: `Docker inspect data for image ${args.image} on ${args.server}`,
     });
-    const payload = link ? { summary, resourceLink: link } : { summary, inspect: result };
+    const payload = link ? { summary, resourceLink: link } : { summary, inspect: komodoObject(result) };
     return structured(payload, { text: renderImageInspect(payload), ...(link ? { links: [link] } : {}) });
   },
 });
 
 export const getDockerImageHistoryTool = defineTool({
   name: "komodo_docker_image_history",
-  description: "Get the layer history of a Docker image (each build step, its size, and the command that produced it).",
+  description:
+    "Get the layer history of a Docker image (each build step, its size, and the command that produced it)." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_REQUIRED),
       image: z.string().min(1).describe("Image name or ID"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: imageHistoryOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.DOCKER },
@@ -176,7 +187,7 @@ export const getDockerImageHistoryTool = defineTool({
       category: "inspect",
       name: `${args.image} (history)`,
       mimeType: "application/json",
-      content: JSON.stringify(items, null, 2),
+      content: () => JSON.stringify(items, null, 2),
       ttlMs: config.MCP_RESOURCE_TTL_INFO,
       inlineFull: args.inline_full,
       description: `Layer history for image ${args.image} on ${args.server}`,
@@ -195,7 +206,7 @@ export const listDockerNetworksTool = defineTool({
   description: "List Docker networks on a server, with driver and scope.",
   input: z
     .object({ server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_REQUIRED) })
-    .merge(paginationInputSchema),
+    .extend(paginationInputSchema.shape),
   output: networkListOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.DOCKER },
@@ -222,13 +233,15 @@ export const listDockerNetworksTool = defineTool({
 
 export const inspectDockerNetworkTool = defineTool({
   name: "komodo_docker_network_inspect",
-  description: "Get detailed Docker inspect data for a network (subnets, connected containers, IPAM config).",
+  description:
+    "Get detailed Docker inspect data for a network (subnets, connected containers, IPAM config)." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_REQUIRED),
       network: z.string().min(1).describe("Network name or ID to inspect"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: networkInspectOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.DOCKER },
@@ -253,12 +266,12 @@ export const inspectDockerNetworkTool = defineTool({
       category: "inspect",
       name: `${args.network} (inspect)`,
       mimeType: "application/json",
-      content: JSON.stringify(result, null, 2),
+      content: () => JSON.stringify(result, null, 2),
       ttlMs: config.MCP_RESOURCE_TTL_INFO,
       inlineFull: args.inline_full,
       description: `Docker inspect data for network ${args.network} on ${args.server}`,
     });
-    const payload = link ? { summary, resourceLink: link } : { summary, inspect: result };
+    const payload = link ? { summary, resourceLink: link } : { summary, inspect: komodoObject(result) };
     return structured(payload, { text: renderNetworkInspect(payload), ...(link ? { links: [link] } : {}) });
   },
 });
@@ -272,7 +285,7 @@ export const listDockerVolumesTool = defineTool({
   description: "List Docker volumes on a server, with driver, mountpoint, and in-use status.",
   input: z
     .object({ server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_REQUIRED) })
-    .merge(paginationInputSchema),
+    .extend(paginationInputSchema.shape),
   output: volumeListOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.DOCKER },
@@ -299,13 +312,14 @@ export const listDockerVolumesTool = defineTool({
 
 export const inspectDockerVolumeTool = defineTool({
   name: "komodo_docker_volume_inspect",
-  description: "Get detailed Docker inspect data for a volume (labels, driver options, scope).",
+  description:
+    "Get detailed Docker inspect data for a volume (labels, driver options, scope)." + RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_REQUIRED),
       volume: z.string().min(1).describe("Volume name to inspect"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: volumeInspectOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.DOCKER },
@@ -329,12 +343,12 @@ export const inspectDockerVolumeTool = defineTool({
       category: "inspect",
       name: `${args.volume} (inspect)`,
       mimeType: "application/json",
-      content: JSON.stringify(result, null, 2),
+      content: () => JSON.stringify(result, null, 2),
       ttlMs: config.MCP_RESOURCE_TTL_INFO,
       inlineFull: args.inline_full,
       description: `Docker inspect data for volume ${args.volume} on ${args.server}`,
     });
-    const payload = link ? { summary, resourceLink: link } : { summary, inspect: result };
+    const payload = link ? { summary, resourceLink: link } : { summary, inspect: komodoObject(result) };
     return structured(payload, { text: renderVolumeInspect(payload), ...(link ? { links: [link] } : {}) });
   },
 });

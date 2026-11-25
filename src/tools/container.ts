@@ -17,6 +17,7 @@
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
 import {
+  RESOURCE_DELIVERY_DESCRIPTION,
   PARAM_DESCRIPTIONS,
   CONTAINER_LOGS_DEFAULTS,
   LOG_DESCRIPTIONS,
@@ -39,6 +40,7 @@ import {
   renderContainerSearchLogs,
   renderActionResult,
   tryRegisterResource,
+  komodoObject,
 } from "../utils/index.js";
 import {
   containerActionInputSchema,
@@ -72,15 +74,25 @@ const INSPECT_CONTAINER_READ = "InspectDockerContainer" as unknown as "InspectCo
 // List
 // ============================================================================
 
+/** Preserve live Periphery stats in structured output instead of dropping them. */
+export function summarizeContainerListItem(container: ContainerListItem) {
+  return {
+    name: container.name,
+    state: container.state,
+    ...(container.image ? { image: container.image } : {}),
+    ...(container.stats ? { stats: container.stats } : {}),
+  };
+}
+
 export const listContainersTool = defineTool({
   name: "komodo_container_list",
   description:
-    "List all containers on a server, including running, stopped, and paused containers. Shows container name, state, and image.",
+    "List all containers on a server, including running, stopped, and paused containers. Shows image, state, and available CPU, memory, network, block I/O, and PID statistics.",
   input: z
     .object({
       server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_TO_LIST_CONTAINERS),
     })
-    .merge(paginationInputSchema),
+    .extend(paginationInputSchema.shape),
   output: containerListOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.CONTAINER },
@@ -95,11 +107,7 @@ export const listContainersTool = defineTool({
       abortSignal,
     );
 
-    const allItems = containers.map((c: ContainerListItem) => ({
-      name: c.name,
-      state: c.state,
-      ...(c.image ? { image: c.image } : {}),
-    }));
+    const allItems = containers.map(summarizeContainerListItem);
 
     const { items, page } = paginate(allItems, args.cursor, args.page_size);
     const payload = { items: [...items], page };
@@ -114,13 +122,14 @@ export const listContainersTool = defineTool({
 export const inspectContainerTool = defineTool({
   name: "komodo_container_inspect",
   description:
-    "Get detailed low-level information about a container. Returns Docker inspect data including configuration, state, network settings, mounts, and process info.",
+    "Get detailed low-level information about a container. Returns Docker inspect data including configuration, state, network settings, mounts, and process info." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_WHERE_CONTAINER_RUNS),
       container: containerNameSchema.describe(PARAM_DESCRIPTIONS.CONTAINER_ID_FOR_INSPECT),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: containerInspectOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.CONTAINER },
@@ -148,12 +157,12 @@ export const inspectContainerTool = defineTool({
       category: "inspect",
       name: `${args.container} (inspect)`,
       mimeType: "application/json",
-      content: JSON.stringify(result, null, 2),
+      content: () => JSON.stringify(result, null, 2),
       ttlMs: config.MCP_RESOURCE_TTL_INFO,
       inlineFull: args.inline_full,
       description: `Docker inspect data for container ${args.container} on ${args.server}`,
     });
-    const payload = link ? { summary, resourceLink: link } : { summary, inspect: result };
+    const payload = link ? { summary, resourceLink: link } : { summary, inspect: komodoObject(result) };
     return structured(payload, {
       text: renderContainerInspect(payload),
       ...(link ? { links: [link] } : {}),
@@ -168,7 +177,8 @@ export const inspectContainerTool = defineTool({
 export const getContainerLogsTool = defineTool({
   name: "komodo_container_logs",
   description:
-    "Get stdout and stderr logs from a container. Useful for debugging, monitoring application output, and troubleshooting issues.",
+    "Get stdout and stderr logs from a container. Useful for debugging, monitoring application output, and troubleshooting issues." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_WHERE_CONTAINER_RUNS),
@@ -186,7 +196,7 @@ export const getContainerLogsTool = defineTool({
         .default(CONTAINER_LOGS_DEFAULTS.TIMESTAMPS)
         .describe(LOG_DESCRIPTIONS.TIMESTAMPS(CONTAINER_LOGS_DEFAULTS.TIMESTAMPS)),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: containerLogsOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.CONTAINER },
@@ -209,22 +219,22 @@ export const getContainerLogsTool = defineTool({
 
     const stdout = result.stdout;
     const stderr = result.stderr;
-    const fullLogs =
+    const link =
       stdout || stderr
-        ? [stdout && `=== stdout ===\n${stdout}`, stderr && `=== stderr ===\n${stderr}`].filter(Boolean).join("\n\n")
-        : "";
-    const link = fullLogs
-      ? tryRegisterResource({
-          ctx: { sessionId },
-          category: "logs",
-          name: `${args.container} (logs)`,
-          mimeType: "text/plain",
-          content: fullLogs,
-          ttlMs: config.MCP_RESOURCE_TTL_LOGS,
-          inlineFull: args.inline_full,
-          description: `Container logs for ${args.container} on ${args.server}`,
-        })
-      : null;
+        ? tryRegisterResource({
+            ctx: { sessionId },
+            category: "logs",
+            name: `${args.container} (logs)`,
+            mimeType: "text/plain",
+            content: () =>
+              [stdout && `=== stdout ===\n${stdout}`, stderr && `=== stderr ===\n${stderr}`]
+                .filter(Boolean)
+                .join("\n\n"),
+            ttlMs: config.MCP_RESOURCE_TTL_LOGS,
+            inlineFull: args.inline_full,
+            description: `Container logs for ${args.container} on ${args.server}`,
+          })
+        : null;
 
     const payload = link
       ? { summary: { name: args.container }, resourceLink: link }
@@ -247,7 +257,8 @@ export const getContainerLogsTool = defineTool({
 export const searchContainerLogsTool = defineTool({
   name: "komodo_container_search_logs",
   description:
-    "Search container logs for specific patterns or keywords. Retrieves logs and filters them client-side. Returns matching lines with a count of matches. Large match sets are offloaded as a session-scoped resource link unless `inline_full` is set.",
+    "Search container logs for specific patterns or keywords. Retrieves logs and filters them client-side. Returns matching lines with a count of matches." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       server: serverIdSchema.describe(PARAM_DESCRIPTIONS.SERVER_ID_WHERE_CONTAINER_RUNS),
@@ -266,7 +277,7 @@ export const searchContainerLogsTool = defineTool({
         .default(LOG_SEARCH_DEFAULTS.CASE_SENSITIVE)
         .describe(LOG_DESCRIPTIONS.CASE_SENSITIVE(LOG_SEARCH_DEFAULTS.CASE_SENSITIVE)),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: containerSearchLogsOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.CONTAINER },
@@ -307,7 +318,7 @@ export const searchContainerLogsTool = defineTool({
             category: "logs",
             name: `${args.container} (search: ${args.query})`,
             mimeType: "text/plain",
-            content: matches.map((m) => `[${m.stream}] ${m.line}`).join("\n"),
+            content: () => matches.map((m) => `[${m.stream}] ${m.line}`).join("\n"),
             ttlMs: config.MCP_RESOURCE_TTL_LOGS,
             inlineFull: args.inline_full,
             description: `${matches.length} matching log line(s) for query "${args.query}" in ${args.container}`,

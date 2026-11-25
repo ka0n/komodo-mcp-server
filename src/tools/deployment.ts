@@ -15,8 +15,14 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { PARAM_DESCRIPTIONS, ToolCategories, ToolScopes, config } from "../config/index.js";
-import { AppErrorFactory } from "../errors/index.js";
+import {
+  RESOURCE_DELIVERY_DESCRIPTION,
+  PARAM_DESCRIPTIONS,
+  ToolCategories,
+  ToolScopes,
+  config,
+} from "../config/index.js";
+import { ValidationError } from "../errors/index.js";
 import {
   requireClient,
   requireKomodoPermission,
@@ -91,12 +97,13 @@ export const listDeploymentsTool = defineTool({
 export const getDeploymentInfoTool = defineTool({
   name: "komodo_deployment_info",
   description:
-    "Get detailed information about a Komodo-managed deployment, including its configuration, current state, and assigned server.",
+    "Get detailed information about a Komodo-managed deployment, including its configuration, current state, and assigned server." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       deployment: deploymentIdSchema.describe(PARAM_DESCRIPTIONS.DEPLOYMENT_ID_FOR_INFO),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: deploymentInfoOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.DEPLOYMENT },
@@ -142,7 +149,7 @@ export const applyDeploymentTool = defineTool({
     const komodo = requireClient();
     if (args.action === "create") {
       requireKomodoCreatePermission("Deployment");
-      if (!args.name) throw AppErrorFactory.validation.fieldRequired("name");
+      if (!args.name) throw ValidationError.fieldRequired("name");
       const name = args.name;
       const deploymentConfig: Record<string, unknown> = { ...args.config };
       if (args.server_id) deploymentConfig.server_id = args.server_id;
@@ -158,7 +165,7 @@ export const applyDeploymentTool = defineTool({
       const built = buildApplyResult("create", "deployment", name, result);
       return structured(built.payload, { text: built.text });
     }
-    if (!args.deployment) throw AppErrorFactory.validation.fieldRequired("deployment");
+    if (!args.deployment) throw ValidationError.fieldRequired("deployment");
     await requireKomodoPermission({ type: "Deployment", id: args.deployment }, Types.PermissionLevel.Write);
     const deploymentId = args.deployment;
     const result = await wrapApiCall(

@@ -15,8 +15,8 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { ToolCategories, ToolScopes, config } from "../config/index.js";
-import { AppErrorFactory } from "../errors/index.js";
+import { RESOURCE_DELIVERY_DESCRIPTION, ToolCategories, ToolScopes, config } from "../config/index.js";
+import { ValidationError } from "../errors/index.js";
 import {
   requireClient,
   requireKomodoPermission,
@@ -94,12 +94,13 @@ export const listReposTool = defineTool({
 
 export const getRepoInfoTool = defineTool({
   name: "komodo_repo_info",
-  description: "Get the full Komodo Repo resource (configuration + last clone/build metadata).",
+  description:
+    "Get the full Komodo Repo resource (configuration + last clone/build metadata)." + RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       repo: repoIdSchema.describe("Repo id or name"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: repoInfoOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.REPO },
@@ -190,7 +191,7 @@ export const applyRepoTool = defineTool({
     const komodo = requireClient();
     if (args.action === "create") {
       requireKomodoCreatePermission("Repo");
-      if (!args.name) throw AppErrorFactory.validation.fieldRequired("name");
+      if (!args.name) throw ValidationError.fieldRequired("name");
       const name = args.name;
       const repoConfig: Record<string, unknown> = { ...args.config };
       const result = await wrapApiCall(
@@ -201,7 +202,7 @@ export const applyRepoTool = defineTool({
       const built = buildApplyResult("create", "repo", name, result);
       return structured(built.payload, { text: built.text });
     }
-    if (!args.repo) throw AppErrorFactory.validation.fieldRequired("repo");
+    if (!args.repo) throw ValidationError.fieldRequired("repo");
     await requireKomodoPermission({ type: "Repo", id: args.repo }, Types.PermissionLevel.Write);
     const repoId = args.repo;
     const result = await wrapApiCall(

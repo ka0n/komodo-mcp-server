@@ -14,8 +14,8 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { ToolCategories, ToolScopes, config } from "../config/index.js";
-import { AppErrorFactory } from "../errors/index.js";
+import { RESOURCE_DELIVERY_DESCRIPTION, ToolCategories, ToolScopes, config } from "../config/index.js";
+import { ValidationError } from "../errors/index.js";
 import {
   requireClient,
   requireKomodoPermission,
@@ -80,12 +80,13 @@ export const listAlertersTool = defineTool({
 export const getAlerterInfoTool = defineTool({
   name: "komodo_alerter_info",
   description:
-    "Get the full Komodo Alerter resource (endpoint configuration, alert filters, maintenance windows). Sensitive fields like webhook URLs are offloaded via a session-scoped resource link when available.",
+    "Get the full Komodo Alerter resource (endpoint configuration, alert filters, maintenance windows)." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       alerter: alerterIdSchema.describe("Alerter id or name"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: alerterInfoOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.ALERTER },
@@ -139,7 +140,7 @@ export const applyAlerterTool = defineTool({
     const komodo = requireClient();
     if (args.action === "create") {
       requireKomodoCreatePermission("Alerter");
-      if (!args.name) throw AppErrorFactory.validation.fieldRequired("name");
+      if (!args.name) throw ValidationError.fieldRequired("name");
       const name = args.name;
       const result = await wrapApiCall(
         "createAlerter",
@@ -154,7 +155,7 @@ export const applyAlerterTool = defineTool({
       const built = buildApplyResult("create", "alerter", name, result);
       return structured(built.payload, { text: built.text });
     }
-    if (!args.alerter) throw AppErrorFactory.validation.fieldRequired("alerter");
+    if (!args.alerter) throw ValidationError.fieldRequired("alerter");
     await requireKomodoPermission({ type: "Alerter", id: args.alerter }, Types.PermissionLevel.Write);
     const alerterId = args.alerter;
     const result = await wrapApiCall(

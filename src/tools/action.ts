@@ -21,8 +21,8 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { ToolCategories, ToolScopes, config } from "../config/index.js";
-import { AppErrorFactory } from "../errors/index.js";
+import { RESOURCE_DELIVERY_DESCRIPTION, ToolCategories, ToolScopes, config } from "../config/index.js";
+import { ValidationError } from "../errors/index.js";
 import {
   requireClient,
   requireKomodoPermission,
@@ -95,12 +95,12 @@ export const listActionsTool = defineTool({
 export const getActionInfoTool = defineTool({
   name: "komodo_action_info",
   description:
-    "Get the full Komodo Action resource (script body, schedule, webhook config). The TypeScript script body is offloaded via a session-scoped resource link when available.",
+    "Get the full Komodo Action resource (script body, schedule, webhook config)." + RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       action_id: actionIdSchema.describe("Action id or name"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: actionInfoOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.ACTION },
@@ -193,7 +193,7 @@ export const applyActionTool = defineTool({
     const komodo = requireClient();
     if (args.action === "create") {
       requireKomodoCreatePermission("Action");
-      if (!args.name) throw AppErrorFactory.validation.fieldRequired("name");
+      if (!args.name) throw ValidationError.fieldRequired("name");
       const name = args.name;
       const result = await wrapApiCall(
         "createAction",
@@ -208,7 +208,7 @@ export const applyActionTool = defineTool({
       const built = buildApplyResult("create", "action", name, result);
       return structured(built.payload, { text: built.text });
     }
-    if (!args.action_id) throw AppErrorFactory.validation.fieldRequired("action_id");
+    if (!args.action_id) throw ValidationError.fieldRequired("action_id");
     await requireKomodoPermission({ type: "Action", id: args.action_id }, Types.PermissionLevel.Write);
     const actionId = args.action_id;
     const result = await wrapApiCall(

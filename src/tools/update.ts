@@ -16,7 +16,7 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { ToolCategories, ToolScopes, config } from "../config/index.js";
+import { RESOURCE_DELIVERY_DESCRIPTION, ToolCategories, ToolScopes, config } from "../config/index.js";
 import {
   requireClient,
   requireKomodoPermission,
@@ -26,6 +26,7 @@ import {
   tryRegisterResource,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
+  komodoObject,
 } from "../utils/index.js";
 import {
   updateIdSchema,
@@ -178,12 +179,14 @@ export const listUpdatesTool = defineTool({
 
 export const getUpdateInfoTool = defineTool({
   name: "komodo_update_info",
-  description: "Get the full update payload for a single operation, including per-stage logs (stdout/stderr).",
+  description:
+    "Get the full update payload for a single operation, including per-stage logs (stdout/stderr)." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       id: updateIdSchema,
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: updateInfoOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.UPDATE },
@@ -201,12 +204,12 @@ export const getUpdateInfoTool = defineTool({
       category: "info",
       name: `Update ${summary.id || args.id} (${summary.operation})`,
       mimeType: "application/json",
-      content: JSON.stringify(result, null, 2),
+      content: () => JSON.stringify(result, null, 2),
       ttlMs: config.MCP_RESOURCE_TTL_INFO,
       inlineFull: args.inline_full,
       description: `Full update payload with per-stage logs`,
     });
-    const payload = link ? { summary, resourceLink: link } : { summary, info: result };
+    const payload = link ? { summary, resourceLink: link } : { summary, info: komodoObject(result) };
     return structured(payload, {
       text: renderUpdateInfo(payload),
       ...(link ? { links: [link] } : {}),

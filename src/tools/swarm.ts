@@ -20,8 +20,8 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { ToolCategories, ToolScopes, config } from "../config/index.js";
-import { AppErrorFactory } from "../errors/index.js";
+import { RESOURCE_DELIVERY_DESCRIPTION, ToolCategories, ToolScopes, config } from "../config/index.js";
+import { ValidationError } from "../errors/index.js";
 import {
   requireClient,
   requireKomodoPermission,
@@ -112,12 +112,13 @@ export const listSwarmsTool = defineTool({
 export const getSwarmInfoTool = defineTool({
   name: "komodo_swarm_info",
   description:
-    "Get the full Komodo Swarm resource (manager server ids, links, alert/maintenance configuration). Large payloads are offloaded via a session-scoped resource link when available.",
+    "Get the full Komodo Swarm resource (manager server ids, links, alert/maintenance configuration)." +
+    RESOURCE_DELIVERY_DESCRIPTION,
   input: z
     .object({
       swarm: swarmIdSchema.describe("Swarm id or name"),
     })
-    .merge(inlineFullInputSchema),
+    .extend(inlineFullInputSchema.shape),
   output: swarmInfoOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.SWARM },
@@ -162,7 +163,7 @@ export const listSwarmNodesTool = defineTool({
     .object({
       swarm: swarmIdSchema.describe("Swarm id or name"),
     })
-    .merge(paginationInputSchema),
+    .extend(paginationInputSchema.shape),
   output: swarmNodesListOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.SWARM },
@@ -199,7 +200,7 @@ export const listSwarmServicesTool = defineTool({
     .object({
       swarm: swarmIdSchema.describe("Swarm id or name"),
     })
-    .merge(paginationInputSchema),
+    .extend(paginationInputSchema.shape),
   output: swarmServicesListOutputSchema,
   annotations: { readOnlyHint: true },
   _meta: { category: ToolCategories.SWARM },
@@ -258,7 +259,7 @@ export const swarmActionTool = defineTool({
     let params: Record<string, unknown>;
     switch (args.action) {
       case "update_node":
-        if (!args.node) throw AppErrorFactory.validation.fieldRequired("node");
+        if (!args.node) throw ValidationError.fieldRequired("node");
         params = {
           swarm: args.swarm,
           node: args.node,
@@ -269,15 +270,15 @@ export const swarmActionTool = defineTool({
         };
         break;
       case "remove_nodes":
-        if (!args.nodes || args.nodes.length === 0) throw AppErrorFactory.validation.fieldRequired("nodes");
+        if (!args.nodes || args.nodes.length === 0) throw ValidationError.fieldRequired("nodes");
         params = { swarm: args.swarm, nodes: args.nodes, ...(args.force !== undefined ? { force: args.force } : {}) };
         break;
       case "remove_services":
-        if (!args.services || args.services.length === 0) throw AppErrorFactory.validation.fieldRequired("services");
+        if (!args.services || args.services.length === 0) throw ValidationError.fieldRequired("services");
         params = { swarm: args.swarm, services: args.services };
         break;
       case "remove_stacks":
-        if (!args.stacks || args.stacks.length === 0) throw AppErrorFactory.validation.fieldRequired("stacks");
+        if (!args.stacks || args.stacks.length === 0) throw ValidationError.fieldRequired("stacks");
         params = { swarm: args.swarm, stacks: args.stacks, detach: args.detach ?? false };
         break;
     }
@@ -327,7 +328,7 @@ export const applySwarmTool = defineTool({
     await requireSwarmSupport();
     if (args.action === "create") {
       requireKomodoCreatePermission("Swarm");
-      if (!args.name) throw AppErrorFactory.validation.fieldRequired("name");
+      if (!args.name) throw ValidationError.fieldRequired("name");
       const name = args.name;
       const result = await wrapApiCall(
         "createSwarm",
@@ -342,7 +343,7 @@ export const applySwarmTool = defineTool({
       const built = buildApplyResult("create", "swarm", name, result);
       return structured(built.payload, { text: built.text });
     }
-    if (!args.swarm) throw AppErrorFactory.validation.fieldRequired("swarm");
+    if (!args.swarm) throw ValidationError.fieldRequired("swarm");
     await requireKomodoPermission({ type: "Swarm", id: args.swarm }, Types.PermissionLevel.Write);
     const swarmId = args.swarm;
     const result = await wrapApiCall(
