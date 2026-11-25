@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Update `@hono/node-server` from 2.1.5 to 2.1.6 within the existing MCP SDK dependency range.
+  See `docs/dependency-security.md` for the remaining findings and validation scope.
 - Defer resource-only JSON/log preparation until offloading or auto sizing needs it, avoiding
   discarded copies for inline delivery, explicit inline overrides, and missing sessions.
 - With secret redaction enabled, validate and structurally scrub TOML exports before either
