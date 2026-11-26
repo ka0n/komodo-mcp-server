@@ -350,7 +350,9 @@ Required when `MCP_TRANSPORT=https`:
 ### Destructive-Action Confirmation
 
 Destructive tools (deletes, destroy, prune, exec, procedure/action/sync runs) ask the human
-operator for approval via the MCP client's elicitation UI before executing.
+operator for approval via the MCP client's elicitation UI before executing. Framework 1.3.0
+sends an empty form and requires the operator to choose **Accept**. Declining, cancelling, or
+letting the prompt expire leaves the operation unapproved.
 
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
@@ -402,7 +404,8 @@ server does not silently override that operator setting.
 > **The TOML export is redacted, so it is not directly re-appliable.** `komodo_toml_export_*`
 > masks secret values, which means the exported file is meant for reading and diffing rather than
 > for feeding straight back through ResourceSync. The `secrets_masked` field in the result reports
-> whether redaction actually ran. Note that Komodo Core itself only masks variable values, and only
+> whether the configured redaction path ran. Arbitrary secrets can remain in the export.
+> Note that Komodo Core itself only masks variable values, and only
 > for non-admin callers - server passkeys and alerter webhook URLs are never masked upstream, so
 > switching redaction off means those leave the server in plaintext.
 
@@ -419,7 +422,8 @@ recognizable shape is not. Don't rely on this feature as the only line of defenc
 Limit which tools clients can use - to restrict what the assistant is allowed to do (e.g. read-only,
 no terminal access) and to keep the tool list small (fewer tokens). Category values are the
 `_meta.category` strings: `config`, `container`, `server`, `stack`, `deployment`, `build`, `repo`,
-`procedure`, `action`, `alerter`, `swarm`, `resource_sync`, `variable`, `update`, `terminal`, `user`.
+`procedure`, `action`, `alerter`, `swarm`, `resource_sync`, `variable`, `update`, `terminal`, `user`,
+`docker`, `builder`, `tag`, and `toml`.
 
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
@@ -427,9 +431,13 @@ no terminal access) and to keep the tool list small (fewer tokens). Category val
 | `MCP_TOOLS_EXCLUDED_CATEGORIES` | `tools.excluded_categories` | - | Remove whole categories |
 | `MCP_TOOLS_EXCLUDED_TOOLS` | `tools.excluded_tools` | - | Remove individual tools by name (e.g. `komodo_exec`) |
 
-These only **remove** tools (allowlist first, then the excludes) - removed tools are absent from
-`tools/list` and not callable. They never add tools or bypass authentication. An unknown category is
-ignored with a startup warning; a misspelled tool name simply has no effect.
+These filters remove tools, applying the allowlist first and then the exclusions. Removed tools
+are unavailable in `tools/list` and `tools/call`. An unknown name anywhere in either category list
+prevents startup, even when other entries are valid. An unknown individual tool name in
+`excluded_tools` has no effect.
+
+Before upgrading, verify every category name in your allowlist and exclusion list against the
+values above, including settings supplied through environment variables.
 
 ## Resources
 

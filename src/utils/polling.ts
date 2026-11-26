@@ -12,10 +12,11 @@ import { addAbortListener } from "node:events";
 import timers from "node:timers/promises";
 import { Types } from "komodo_client";
 import type { ProgressReporter } from "mcp-server-framework";
-import { OperationCancelledError, getCurrentToolContext } from "mcp-server-framework";
+import { AuthorizationError, OperationCancelledError, getCurrentToolContext } from "mcp-server-framework";
+import { HttpStatus } from "mcp-server-framework/errors";
 import type { KomodoClient } from "../client.js";
-import { ApiError } from "../errors/index.js";
-import { requireClient, checkCancelled, wrapApiCall } from "./api-helpers.js";
+import { ApiError, AuthenticationError, ConnectionError } from "../errors/index.js";
+import { checkCancelled, requireClient, wrapApiCall } from "./api-helpers.js";
 import { getKomodoRequestSignal, runWithKomodoRequestSignal } from "./request-signal.js";
 
 type Update = Types.Update;
@@ -158,7 +159,7 @@ export async function wrapExecuteAndPoll(
   signal = getKomodoRequestSignal() ?? getCurrentToolContext()?.abortSignal,
   reportProgress?: ProgressReporter,
 ): Promise<Update> {
-  checkCancelled(signal, operation);
+  checkCancelled(signal, "The caller cancelled before MCP submitted the operation.");
 
   const client = requireClient();
   const deadline = new AbortController();
@@ -168,30 +169,78 @@ export async function wrapExecuteAndPoll(
   const stopped = new Promise<never>((_, reject) => {
     abortListener = addAbortListener(workflowSignal, () => reject(new OperationCancelledError(operation)));
   });
-  let updateId = "unknown";
+  const context = getCurrentToolContext();
+  const state: { phase: "submission" | "polling" | "progress"; updateId?: string } = { phase: "submission" };
   try {
     const workflow = runWithKomodoRequestSignal(workflowSignal, async () => {
       const update = await wrapApiCall(operation, executeCall, workflowSignal);
+      state.phase = "polling";
+      const id: unknown = update._id?.$oid;
+      // Core returns a MongoDB ObjectId. Only expose a valid ID in diagnostics.
+      if (typeof id === "string" && /^[a-f0-9]{24}$/i.test(id)) {
+        state.updateId = id;
+        context?.recordAuditDetail({ effect: { updateId: id } });
+      }
       workflowSignal.throwIfAborted();
       if (update.status === Types.UpdateStatus.Complete) return update;
 
-      updateId = extractUpdateId(update);
-      return await pollUntilComplete(client, updateId, operation, workflowSignal, reportProgress);
+      const acceptedId = state.updateId;
+      if (!acceptedId) throw ApiError.invalidResponse("Komodo returned no valid update ID");
+      const progress: ProgressReporter | undefined =
+        reportProgress &&
+        (async (notification) => {
+          state.phase = "progress";
+          const reported = await reportProgress({
+            ...notification,
+            message: `${notification.message ?? operation} (update ${acceptedId})`,
+          });
+          state.phase = "polling";
+          return reported;
+        });
+      return await pollUntilComplete(client, acceptedId, operation, workflowSignal, progress);
     });
     return await Promise.race([workflow, stopped]);
   } catch (error) {
-    checkCancelled(signal, operation);
-    if (deadline.signal.aborted) {
-      throw ApiError.requestFailed(
-        `${operation}: polling timed out after ${POLL_MAX_DURATION_MS / 1000}s (update: ${updateId})`,
-      );
+    const { phase, updateId } = state;
+    const cancelled = signal?.aborted || (!deadline.signal.aborted && OperationCancelledError.isCancellation(error));
+    if (phase === "submission" && !cancelled && !deadline.signal.aborted) {
+      // A definite rejection did not accept the operation. Preserve existing authorization
+      // and input errors, while treating interrupted requests and invalid responses as ambiguous.
+      const status = error instanceof ApiError ? error.apiStatusCode : undefined;
+      if (
+        error instanceof AuthorizationError ||
+        error instanceof AuthenticationError ||
+        (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 499)
+      ) {
+        throw error;
+      }
     }
 
-    if (OperationCancelledError.isCancellation(error)) {
-      throw new OperationCancelledError(operation);
+    const recoveryHint = updateId
+      ? `Check komodo_update_info with id "${updateId}" before retrying.`
+      : "Check recent operations with komodo_update_list before retrying.";
+    const outcome = updateId
+      ? `Komodo update ${updateId} may still be running.`
+      : "No update ID was received. The outcome in Komodo is unknown.";
+    let reason = phase === "submission" ? "Submission was interrupted." : "Polling was interrupted.";
+    if (cancelled) reason = "The caller cancelled the request.";
+    else if (deadline.signal.aborted)
+      reason = `The workflow reached its ${POLL_MAX_DURATION_MS / 60_000}-minute deadline.`;
+    else if (phase === "progress") reason = "Progress reporting was interrupted.";
+    else if (error instanceof ConnectionError && error.statusCode === HttpStatus.GATEWAY_TIMEOUT) {
+      reason = "A Komodo HTTP request timed out.";
     }
-    // All other errors already wrapped by wrapApiCall
-    throw error;
+    const message = `MCP stopped waiting. ${reason} ${outcome} ${recoveryHint}`;
+    const options = { recoveryHint, context: updateId ? { updateId } : undefined };
+    context?.recordAuditDetail({ effect: { ...(updateId && { updateId }), wait: "interrupted" } });
+    if (cancelled) throw new OperationCancelledError(message, undefined, options);
+    if (deadline.signal.aborted || phase === "progress") throw new ApiError(message, options);
+    if (error instanceof ConnectionError) {
+      throw new ConnectionError(message, "Komodo", { ...options, statusCode: error.statusCode });
+    }
+    if (error instanceof AuthorizationError) throw new AuthorizationError(message, options);
+    if (error instanceof AuthenticationError) throw new AuthenticationError(message, options);
+    throw new ApiError(message, options);
   } finally {
     clearTimeout(timer);
     abortListener?.[Symbol.dispose]();

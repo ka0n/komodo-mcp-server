@@ -413,7 +413,7 @@ export interface DestructiveConfirmationRequest {
 
 /**
  * Require, **before** the actual API call, that the human operator manually confirms a
- * destructive operation via the client's MCP elicitation UI (accept + confirm checkbox).
+ * destructive operation by explicitly accepting the client's MCP elicitation prompt.
  *
  * Policy (config-driven):
  * - `MCP_CONFIRM_DESTRUCTIVE=false` → no-op (feature disabled).

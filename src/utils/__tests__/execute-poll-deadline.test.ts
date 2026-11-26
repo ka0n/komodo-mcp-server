@@ -12,7 +12,8 @@ import { requireClient } from "../api-helpers.js";
 import { wrapExecuteAndPoll } from "../polling.js";
 
 const deadlineMs = 30 * 60 * 1000;
-const inProgress = { _id: { $oid: "update-1" }, status: Types.UpdateStatus.InProgress, logs: [{ stage: "deploy" }] };
+const updateId = "0123456789abcdef01234567";
+const inProgress = { _id: { $oid: updateId }, status: Types.UpdateStatus.InProgress, logs: [{ stage: "deploy" }] };
 const complete = { ...inProgress, status: Types.UpdateStatus.Complete, success: true };
 
 before(async () => {
@@ -31,6 +32,16 @@ after(stopKomodoConnections);
 
 function execute(action = "fixture") {
   return requireClient().client.execute("RunAction", { action });
+}
+
+function assertRecovery(error: Error, knownId?: string): void {
+  assert.match(error.message, /MCP stopped waiting/);
+  if (knownId) {
+    assert.ok(error.message.includes(`Komodo update ${knownId} may still be running`));
+    assert.ok(error.message.includes(`komodo_update_info with id "${knownId}" before retrying`));
+  } else {
+    assert.match(error.message, /outcome in Komodo is unknown.*komodo_update_list before retrying/);
+  }
 }
 
 test("a stalled poll body hits the HTTP timeout before the workflow deadline", { timeout: 1_000 }, async (t) => {
@@ -55,7 +66,12 @@ test("a stalled poll body hits the HTTP timeout before the workflow deadline", {
   });
   const caller = new AbortController();
   const result = wrapExecuteAndPoll("run", () => execute(), caller.signal);
-  const rejected = assert.rejects(result, { name: ConnectionError.name, message: /run \(poll\) timed out/i });
+  const rejected = assert.rejects(result, (error: unknown) => {
+    assert.ok(error instanceof ConnectionError);
+    assert.match(error.message, /HTTP request timed out/);
+    assertRecovery(error, updateId);
+    return true;
+  });
   await setImmediate();
   t.mock.timers.tick(1_000);
   const pollSignal = await polling;
@@ -98,10 +114,10 @@ for (const phase of ["submit", "GetUpdate", "progress", "final progress"] as con
         }),
     );
     const result = wrapExecuteAndPoll("deploy", () => execute(), undefined, reportProgress);
-    const updateId = phase === "submit" ? "unknown" : "update-1";
     const rejected = assert.rejects(result, (error: unknown) => {
       assert.ok(error instanceof ApiError);
-      assert.ok(error.message.includes(`polling timed out after 1800s (update: ${updateId})`));
+      assert.match(error.message, /30-minute deadline/);
+      assertRecovery(error, phase === "submit" ? undefined : updateId);
       return true;
     });
     await setImmediate();
@@ -144,7 +160,11 @@ test(
     const caller = new AbortController();
     const rejected = assert.rejects(
       wrapExecuteAndPoll("deploy", () => execute(), caller.signal),
-      OperationCancelledError,
+      (error: unknown) => {
+        assert.ok(error instanceof OperationCancelledError);
+        assertRecovery(error, updateId);
+        return true;
+      },
     );
     await setImmediate();
     assert.equal(fetch.mock.callCount(), 1);
@@ -183,7 +203,11 @@ test(
     const caller = new AbortController();
     const cancelled = assert.rejects(
       wrapExecuteAndPoll("first", () => execute("first"), caller.signal),
-      OperationCancelledError,
+      (error: unknown) => {
+        assert.ok(error instanceof OperationCancelledError);
+        assertRecovery(error);
+        return true;
+      },
     );
     const unaffected = wrapExecuteAndPoll("second", () => execute("second"));
     caller.abort();
@@ -226,8 +250,8 @@ test(
     assert.deepEqual(
       reportProgress.mock.calls.map(({ arguments: args }) => args),
       [
-        [{ progress: 1, message: "deploy: deploy (1s)" }],
-        [{ progress: 1, total: 1, message: "deploy: complete (1s)" }],
+        [{ progress: 1, message: `deploy: deploy (1s) (update ${updateId})` }],
+        [{ progress: 1, total: 1, message: `deploy: complete (1s) (update ${updateId})` }],
       ],
     );
     await assert.rejects(
@@ -236,3 +260,78 @@ test(
     );
   },
 );
+
+for (const failure of ["poll", "progress"] as const) {
+  test(
+    `interrupted ${failure} reports the accepted ID without upstream error content`,
+    { timeout: 1_000 },
+    async (t) => {
+      const privateText = "sensitive-fixture-response";
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      const fetch = t.mock.method(globalThis, "fetch", async (url: string) => {
+        if (new URL(url).pathname === "/execute/RunAction") return Response.json(inProgress);
+        return failure === "poll" ? Response.json({ error: privateText }, { status: 500 }) : Response.json(inProgress);
+      });
+      const report = t.mock.fn(async () => {
+        throw new Error(privateText);
+      });
+      const result = wrapExecuteAndPoll("deploy", () => execute(), undefined, report);
+      const rejected = assert.rejects(result, (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assertRecovery(error, updateId);
+        assert.match(
+          error.message,
+          failure === "poll" ? /Polling was interrupted/ : /Progress reporting was interrupted/,
+        );
+        assert.doesNotMatch(JSON.stringify(error), new RegExp(privateText));
+        return true;
+      });
+      await setImmediate();
+      t.mock.timers.tick(1_000);
+      await rejected;
+      assert.equal(fetch.mock.callCount(), 2, "no submission retry");
+      assert.equal(report.mock.callCount(), failure === "progress" ? 1 : 0);
+    },
+  );
+}
+
+test("a failed submission with no usable ID reports an unknown outcome and never resubmits", async (t) => {
+  const privateText = "private-fixture-secret";
+  const fetch = t.mock.method(globalThis, "fetch", async () =>
+    Response.json({
+      ...inProgress,
+      _id: { $oid: privateText },
+    }),
+  );
+  await assert.rejects(
+    wrapExecuteAndPoll("deploy", () => execute()),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assertRecovery(error);
+      assert.doesNotMatch(JSON.stringify(error), new RegExp(privateText));
+      return true;
+    },
+  );
+  assert.equal(fetch.mock.callCount(), 1, "do not poll malformed IDs or resubmit");
+});
+
+test("HTTP interruption responses during submission preserve an unknown remote outcome", async (t) => {
+  const privateText = "private-fixture-response";
+  for (const status of [408, 499, 500]) {
+    const fetch = t.mock.method(globalThis, "fetch", async () => Response.json({ error: privateText }, { status }));
+    try {
+      await assert.rejects(
+        wrapExecuteAndPoll("deploy", () => execute()),
+        (error: unknown) => {
+          assert.ok(error instanceof ApiError);
+          assertRecovery(error);
+          assert.ok(!JSON.stringify(error).includes(privateText));
+          return true;
+        },
+      );
+      assert.equal(fetch.mock.callCount(), 1);
+    } finally {
+      fetch.mock.restore();
+    }
+  }
+});

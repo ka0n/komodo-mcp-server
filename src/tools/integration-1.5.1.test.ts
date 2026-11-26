@@ -1,9 +1,13 @@
 import "../utils/polyfills.js";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -20,7 +24,12 @@ void test(
   "stdio child preserves delivery, filtering, redaction, confirmation denial and cancellation",
   { timeout: 60_000 },
   async (t) => {
+    const updateId = "0123456789abcdef01234567";
+    const auditDirectory = await mkdtemp(join(tmpdir(), "komodo-mcp-stdio-"));
+    const auditPath = join(auditDirectory, "audit.log");
+    t.after(() => rm(auditDirectory, { recursive: true, force: true }));
     let writes = 0;
+    let submissions = 0;
     let polls = 0;
     let pollStarted!: () => void;
     let closePoll!: (completed: boolean) => void;
@@ -48,7 +57,8 @@ void test(
             }),
           );
         case "/execute/StartStack":
-          return res.end(JSON.stringify({ _id: { $oid: "fixture-update" }, status: "InProgress", logs: [] }));
+          submissions++;
+          return res.end(JSON.stringify({ _id: { $oid: updateId }, status: "InProgress", logs: [] }));
         case "/read/GetUpdate":
           polls++;
           res.once("close", () => closePoll(res.writableEnded));
@@ -82,6 +92,8 @@ void test(
             PATH: process.env["PATH"] ?? "",
             MCP_TRANSPORT: "stdio",
             LOG_LEVEL: "error",
+            LOG_AUDIT_FILE: auditPath,
+            LOG_AUDIT_TOOL_IO: "off",
             KOMODO_URL: `http://127.0.0.1:${address.port}`,
             KOMODO_API_KEY: "fixture-key",
             KOMODO_API_SECRET: "fixture-secret",
@@ -145,6 +157,16 @@ void test(
           await cancelled;
           assert.equal(await pollClosed, false, "the MCP cancellation must terminate the pending response body");
           assert.equal(polls, 1);
+          assert.equal(submissions, 1);
+          let audit = "";
+          const effect = JSON.stringify({ updateId, wait: "interrupted" });
+          for (let attempt = 0; attempt < 40; attempt++) {
+            // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed fixture in a fresh temp directory.
+            audit = await readFile(auditPath, "utf8");
+            if (audit.includes(effect)) break;
+            await delay(25);
+          }
+          assert.ok(audit.includes(effect), "the audit trail retains the ID after the client discards the response");
         }
       });
     }
@@ -222,8 +244,10 @@ void test("delivery policies preserve scope denial and explicit destructive appr
           { capabilities: { elicitation: { form: {} } } },
         );
         let prompts = 0;
-        client.setRequestHandler(ElicitRequestSchema, async () => {
+        client.setRequestHandler(ElicitRequestSchema, async ({ params }) => {
           prompts++;
+          assert.ok("requestedSchema" in params);
+          assert.deepEqual(params.requestedSchema, { type: "object", properties: {} });
           return { action: action === "read-scope" ? "accept" : action, content: {} };
         });
         st.after(async () => {

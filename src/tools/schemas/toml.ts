@@ -49,10 +49,9 @@ export const tomlOutputSchema = z
       secrets_masked: z
         .boolean()
         .describe(
-          "Whether secret redaction was applied to this export. True (the default) means secret values — " +
-            "variable values, server passkeys, alerter webhook URLs — are masked, so the TOML is for inspection " +
-            "rather than re-applying verbatim. False means redaction is switched off server-side and the export " +
-            "may contain plaintext secrets.",
+          "Whether the configured secret redaction policy ran on this export. Redacted TOML is for inspection " +
+            "and may still contain values the policy does not recognize. When false, redaction is disabled " +
+            "and the export may contain plaintext credentials.",
         ),
     }),
     toml: z
