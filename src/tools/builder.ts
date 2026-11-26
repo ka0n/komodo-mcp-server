@@ -15,7 +15,7 @@
 
 import { defineTool, structured, z } from "mcp-server-framework";
 import { Types } from "komodo_client";
-import { ToolCategories, ToolScopes, config } from "../config/index.js";
+import { RESOURCE_DELIVERY_DESCRIPTION, ToolCategories, ToolScopes, config } from "../config/index.js";
 import { ValidationError } from "../errors/index.js";
 import {
   requireClient,
@@ -29,6 +29,7 @@ import {
   buildApplyResult,
   buildDeleteResult,
   paginate,
+  LIST_ALL,
   tryRegisterResource,
   renderActionResult,
   renderBuilderList,
@@ -68,7 +69,7 @@ export const listBuildersTool = defineTool({
   requiredScopes: [ToolScopes.READ],
   handler: async (args, { abortSignal }) => {
     const komodo = requireClient();
-    const builders = await wrapApiCall("listBuilders", () => komodo.client.read("ListBuilders", {}), abortSignal);
+    const builders = await wrapApiCall("listBuilders", () => komodo.client.read("ListBuilders", LIST_ALL), abortSignal);
     const allItems = builders.map((b: BuilderListItem) => ({
       id: b.id,
       name: b.name,
@@ -88,7 +89,7 @@ export const listBuildersTool = defineTool({
 export const getBuilderInfoTool = defineTool({
   name: "komodo_builder_info",
   description:
-    "Get the full Komodo Builder resource (type, connection/instance configuration). Offloaded via a session-scoped resource link unless `inline_full` is set.",
+    "Get the full Komodo Builder resource (type, connection/instance configuration)." + RESOURCE_DELIVERY_DESCRIPTION,
   input: z.object({ builder: builderIdSchema.describe("Builder id or name") }).extend(inlineFullInputSchema.shape),
   output: builderInfoOutputSchema,
   annotations: { readOnlyHint: true },
@@ -112,7 +113,7 @@ export const getBuilderInfoTool = defineTool({
       category: "info",
       name: `${result.name} (builder info)`,
       mimeType: "application/json",
-      content: JSON.stringify(result, null, 2),
+      content: () => JSON.stringify(result, null, 2),
       ttlMs: config.MCP_RESOURCE_TTL_INFO,
       inlineFull: args.inline_full,
       description: `Full builder resource for ${result.name}`,

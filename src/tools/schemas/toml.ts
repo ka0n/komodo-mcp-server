@@ -42,17 +42,22 @@ export function splitResourceTarget(entry: string): { type: string; id: string }
 export const tomlOutputSchema = z
   .object({
     summary: z.object({
-      bytes: z.number().int().describe("Size of the exported TOML in bytes"),
+      bytes: z
+        .number()
+        .int()
+        .describe("UTF-8 bytes of the complete exported TOML after configured redaction, for either delivery path"),
       secrets_masked: z
         .boolean()
         .describe(
-          "Whether secret redaction was applied to this export. True (the default) means secret values — " +
-            "variable values, server passkeys, alerter webhook URLs — are masked, so the TOML is for inspection " +
-            "rather than re-applying verbatim. False means redaction is switched off server-side and the export " +
-            "may contain plaintext secrets.",
+          "Whether the configured secret redaction policy ran on this export. Redacted TOML is for inspection " +
+            "and may still contain values the policy does not recognize. When false, redaction is disabled " +
+            "and the export may contain plaintext credentials.",
         ),
     }),
-    toml: z.string().optional().describe("The exported sync TOML (inline when small or inline_full is set)"),
+    toml: z
+      .string()
+      .optional()
+      .describe("Complete sync TOML when delivery is inline (configured mode, inline_full, or fallback)"),
     resourceLink: resourceLinkSchema.optional(),
   })
   .describe("Exported sync TOML contents");

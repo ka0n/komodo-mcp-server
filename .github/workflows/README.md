@@ -57,6 +57,13 @@ ghcr.io/mp-tool/komodo-mcp-server:latest # Always newest
 - Validates version bumps before release
 - Shows what will be released
 
+### 3. Independent PR CI (`ci.yml`)
+
+Runs for pull requests targeting `main` or `1.5.1`, including drafts, with Node.js 22 and 24 and
+read-only repository permissions. Each job runs `npm ci`, tests with `MCP_SCRUB_ENABLED` set to
+both `true` and `false`, lint, formatting, type checks, and both TypeScript builds. Each job has a
+10-minute timeout and uses the repository's pinned checkout/setup-node actions.
+
 ## 🚀 Release Process
 
 ### Development Workflow

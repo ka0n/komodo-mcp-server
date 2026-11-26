@@ -29,6 +29,7 @@ import { connectUserClient, getGlobalClient, servesAnonymousRequests } from "../
 import { komodoIdentity, meetsPermissionLevel, canCreateResource, permissionLevelOf } from "../auth/komodo-identity.js";
 import type { CreatableResourceType } from "../auth/komodo-identity.js";
 import { config } from "../config/index.js";
+import { getKomodoRequestSignal, runWithKomodoRequestSignal } from "./request-signal.js";
 
 // ============================================================================
 // Error Code Sets
@@ -412,7 +413,7 @@ export interface DestructiveConfirmationRequest {
 
 /**
  * Require, **before** the actual API call, that the human operator manually confirms a
- * destructive operation via the client's MCP elicitation UI (accept + confirm checkbox).
+ * destructive operation by explicitly accepting the client's MCP elicitation prompt.
  *
  * Policy (config-driven):
  * - `MCP_CONFIRM_DESTRUCTIVE=false` → no-op (feature disabled).
@@ -565,11 +566,17 @@ function isKomodoPermissionDenied(status: number, message: string): boolean {
  * - HTTP errors: { status: 4xx|5xx, result: { error: "message", trace?: [...] } }
  * - Network errors: { status: 1, result: { error: "..." }, error: <Error> }
  */
-export async function wrapApiCall<T>(operation: string, apiCall: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function wrapApiCall<T>(
+  operation: string,
+  apiCall: () => Promise<T>,
+  signal = getKomodoRequestSignal() ?? getCurrentToolContext()?.abortSignal,
+): Promise<T> {
   checkCancelled(signal, operation);
 
   try {
-    return await apiCall();
+    const result = await runWithKomodoRequestSignal(signal, apiCall);
+    checkCancelled(signal, operation);
+    return result;
   } catch (error) {
     checkCancelled(signal, operation);
 

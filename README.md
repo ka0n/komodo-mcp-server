@@ -36,12 +36,12 @@ Komodo MCP Server enables seamless interaction between AI assistants (like Claud
 
 - **Three Auth Methods** — API Key/Secret (recommended), username/password, or JWT token. All support Docker secrets via `*_FILE` variants.
 - **Auth Enabled by Default** — Over HTTP every caller authenticates as a Komodo user and acts with that user's permissions: interactively (username/password or API key) or without a browser (OAuth `client_credentials`). The global `[komodo]` connection is used only for stdio, auth-disabled deployments, and clients you register explicitly.
-- **Confirmation for Destructive Actions** — Deletes, destroys, prunes, and shell execution ask the human operator for explicit approval first (MCP elicitation with a confirm checkbox). Fail-closed on clients that can't prompt; tunable via `MCP_CONFIRM_DESTRUCTIVE` / `MCP_CONFIRM_FALLBACK`.
+- **Confirmation for Destructive Actions** — Deletes, destroys, prunes, and shell execution ask the human operator to explicitly accept an MCP elicitation prompt. Fail-closed on clients that can't prompt. Configure with `MCP_CONFIRM_DESTRUCTIVE` and `MCP_CONFIRM_FALLBACK`.
 - **Hardened by Default** — Input validation (Zod), rate limiting, DNS rebinding protection, security headers via Helmet, and central fail-closed secret redaction: every tool result (including exec output and retrieved logs) passes the framework's scrub boundary before it reaches the client transcript — see [Secret Redaction](config/README.md#secret-redaction).
 
 ### ⚡ Reliability & Operations
 
-- **Live Progress & Cancellation** — Long-running operations (deploy, start, stop) report real-time progress. Cancel any operation mid-flight via AbortSignal.
+- **Live Progress & Cancellation** — Long-running operations report progress while MCP waits, for up to 30 minutes from submission. Komodo may continue an operation after MCP stops waiting. Check its status with `komodo_update_info` using the update ID, or check recent operations with `komodo_update_list` when submission returned no ID. Check status before retrying. If the client discards a cancelled request's response, a known ID is available in its `tool.call` audit entry under `effect.updateId`.
 - **Auto-Reconnection** — Connection monitoring with automatic recovery and exponential backoff. Auth failures stop retries immediately.
 - **Health & Readiness** — Kubernetes-ready `/health` and `/ready` endpoints. `komodo_health_check` reports server version, connectivity, and auth status.
 
@@ -77,7 +77,7 @@ Komodo MCP Server enables seamless interaction between AI assistants (like Claud
 >
 > **Limit the tool surface (server-side).** To keep a client's tool list - and its token cost - small, prune what the server registers with three optional env vars: `MCP_TOOLS_ALLOWED_CATEGORIES` (category allowlist; unset -> all), `MCP_TOOLS_EXCLUDED_CATEGORIES` (drop whole categories), and `MCP_TOOLS_EXCLUDED_TOOLS` (drop tools by name, e.g. `komodo_exec`). Use the exact category strings above. Pruned tools are absent from `tools/list` and not callable. This is purely subtractive - it never exposes more and never bypasses authentication or the read-only-when-open behavior.
 >
-> List/info/logs tools support **cursor pagination** via `{ cursor, page_size }` (1–100, default 25) and emit `_meta.page.next_cursor` when more items are available. `inspect`, `info`, `logs`, and `search_logs` responses also include a session-scoped `ephemeral://...` resource link so large payloads can be fetched out-of-band via `resources/read`; pass `inline_full: true` to force inlining.
+> List/info/logs tools support **cursor pagination** via `{ cursor, page_size }` (1–100, default 25) and emit `_meta.page.next_cursor` when more items are available. Offload-capable info, inspect, log, search-log, and TOML export tools use session-scoped `ephemeral://...` resource links by default, fetched via `resources/read`. Set `MCP_RESOURCE_RESPONSE_MODE=auto` to inline payloads up to `MCP_RESOURCE_INLINE_THRESHOLD_BYTES` (default 16384 UTF-8 bytes), or `inline` to always inline complete data. `inline_full: true` always forces inlining. See [Resources](config/README.md#resources).
 
 
 ## Quick Start
@@ -138,6 +138,30 @@ Add to `.vscode/mcp.json` in your workspace:
 ```
 
 -> **[Full VS Code Guide](examples/vscode/README.md)** · **[Node.js / npx (no Docker)](examples/node/README.md)** · **[All Integrations](examples/README.md)**
+
+### ChatGPT via OpenAI Secure MCP Tunnel (stdio)
+
+For ChatGPT clients that cannot reliably consume `resource_link` results, configure the **Komodo MCP
+server process** (the `node /app/build/index.js` child launched over stdio) with:
+
+```dotenv
+MCP_RESOURCE_RESPONSE_MODE=inline
+```
+
+Set this environment variable on the MCP process/container, **not solely on the tunnel client**
+unless its environment is explicitly inherited by the child. The existing Secure MCP Tunnel,
+connection details, and `stdio` transport do not need to change.
+
+With this setting, `komodo_stack_info`, container inspect/log/search-log tools, and TOML exports
+deliver their complete payloads inline even when the tool caller omits `inline_full` or passes
+`inline_full: false`. The `inline_full: true` argument always forces full inline delivery for an
+individual request, regardless of the server mode.
+
+The default is still `MCP_RESOURCE_RESPONSE_MODE=link` for backwards compatibility. The `auto`
+mode only inlines results at or below the configured threshold (default 16384 UTF-8 bytes); larger
+results still require a client that supports `resources/read`. For ChatGPT clients that cannot read
+those links reliably, use `inline` instead of `auto`. Large inline responses can increase context
+and memory usage; request bounded logs where possible. See [Resource delivery modes](config/README.md#resources).
 
 ## Use
 
@@ -210,7 +234,7 @@ For the full configuration reference (env vars, config files, Docker secrets), s
 **Tools are missing from the list.** Two causes, both by design:
 - **Read-only mode.** If you disabled auth (`MCP_AUTH_ENABLED=false`) on an HTTP/HTTPS transport, the server is read-only for anonymous callers — every write/exec/delete tool (incl. `komodo_exec`) is hidden and rejected. Enable `[auth]` to get them back. Startup logs a `READ-ONLY` notice when this is active.
 - **Your Komodo permissions.** With authentication on, you only see the tools your Komodo user (or the user your API key belongs to) may use. A read-only service user sees read tools only.
-- **Tool-surface filter.** `MCP_TOOLS_ALLOWED_CATEGORIES`, `MCP_TOOLS_EXCLUDED_CATEGORIES`, or `MCP_TOOLS_EXCLUDED_TOOLS` prune the registered set. Unset all three to expose everything. A bad category name is ignored with a startup warning listing the valid categories.
+- **Tool-surface filter.** `MCP_TOOLS_ALLOWED_CATEGORIES`, `MCP_TOOLS_EXCLUDED_CATEGORIES`, or `MCP_TOOLS_EXCLUDED_TOOLS` prune the registered set. Unset all three to expose everything. An unknown category in either category setting rejects startup and lists the valid categories, including when valid and unknown names are mixed. Unset or empty category lists retain their documented unrestricted semantics.
 
 ## Disclaimer
 
@@ -261,7 +285,9 @@ GPL-3.0 License - see [LICENSE](LICENSE.txt) for details.
 ## Security
 Report security vulnerabilities via GitHub's Private Vulnerability Reporting (see [SECURITY.md](SECURITY.md)).
 
-**Destructive-action confirmation:** By default, destructive tools (all `*_delete` tools, `komodo_exec`, stack/deployment `destroy`, server `stop_all`/`prune_*`/`delete_*`, swarm `remove_*`, and procedure/action/resource-sync `run`) require the human operator to approve an MCP elicitation prompt — "accept" plus a ticked confirm checkbox — before anything executes. Clients that cannot prompt (no elicitation support, or stateless HTTP mode) are refused by default. Tune with `MCP_CONFIRM_FALLBACK=allow` (execute with a warning on such clients) or `MCP_CONFIRM_DESTRUCTIVE=false` (disable the feature) — relevant for stdio setups whose client lacks elicitation support.
+**Destructive-action confirmation.** By default, destructive tools (all `*_delete` tools, `komodo_exec`, stack/deployment `destroy`, server `stop_all`/`prune_*`/`delete_*`, swarm `remove_*`, and procedure/action/resource-sync `run`) require the operator to explicitly accept an MCP elicitation prompt. Framework 1.3.0 presents an empty form with accept, decline, and cancel actions. Clients that cannot prompt (no elicitation support, or stateless HTTP mode) are refused by default. Tune with `MCP_CONFIRM_FALLBACK=allow` (execute with a warning on such clients) or `MCP_CONFIRM_DESTRUCTIVE=false` (disable the feature).
+
+**Terminal cancellation and cleanup.** Cancellation or the five-minute execution deadline closes the HTTP stream for every `komodo_exec` target. The remote command may continue. For server calls, omit `terminal` to use an isolated terminal. MCP attempts deletion after success, failure, timeout, or cancellation. This bounded cleanup can add time after execution stops. The response text, when available, gives the generated name if a cleanup retry is scheduled. The `tool.call` audit entry records that name and whether deletion was confirmed or a retry was scheduled. Cleanup is best effort and the process can exit before its one delayed retry. If cleanup remains unconfirmed, use the generated name to find the terminal under Terminals in Komodo. Detached processes can outlive deletion. Pass an explicit terminal name to keep server shell state across calls.
 
 **Secret redaction:** Tool results are persisted to the MCP client transcript and forwarded to the model provider, so every tool result passes the framework's central, fail-closed scrub boundary before it leaves the process — structured resource config (env blocks, `webhook_secret`, `passkey`), alerter webhook URLs, exec output, and container/build/update logs, for inline payloads and offloaded resource links alike. On top, `is_secret` variable values are always masked and stacks drop the post-interpolation `deployed_config`/`deployed_contents`. Best-effort defence-in-depth: heuristics catch deterministic secret shapes, not arbitrary material. Intended exception: `komodo_user_create_api_key` returns its one-time secret unredacted. See [Secret Redaction](config/README.md#secret-redaction).
 

@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 --------------------------------------------------------------
+## [Unreleased]
+
+### Fixed
+
+- Preserve Komodo update IDs and provide recovery guidance when MCP stops waiting for an operation.
+- Abort terminal HTTP streams for every execution target and report uncertain isolated-terminal cleanup.
+- Defer resource-only JSON/log preparation until offloading or auto sizing needs it, avoiding
+  discarded copies for inline delivery, explicit inline overrides, and missing sessions.
+- With secret redaction enabled, validate and structurally scrub TOML exports before either
+  delivery path; withhold the whole export on parsing, scrubbing, serialization, or validation
+  failure without exposing raw TOML or error details. Explicit redaction opt-out is unchanged.
+- Reject fractional threshold strings before JavaScript numeric rounding. Clarify MCP tool
+  delivery descriptions and make redaction-dependent tests independent of the inherited switch.
+- Count TOML `summary.bytes` after configured redaction for both inline and resource output;
+  bound the rendered preview while preserving complete structured data. Add real search-log MCP
+  coverage. Declare the already-locked `smol-toml` parser directly for strict export handling.
+
+### Added
+
+- Independent read-only PR CI on Node.js 22 and 24 with a locked install, tests with framework
+  redaction enabled and disabled, lint, formatting, type checks, and both TypeScript builds.
+- Configurable resource delivery for offload-capable info, inspect, log, and TOML export tools:
+  `MCP_RESOURCE_RESPONSE_MODE=link|inline|auto` (default `link`, preserving v1.5.0 behavior) and
+  `MCP_RESOURCE_INLINE_THRESHOLD_BYTES` (default 16384 UTF-8 bytes, inclusive). `inline_full: true`
+  remains an explicit override. Both paths retain existing redaction, schemas, resource TTLs,
+  session isolation, entry limits, and inline fallback on registration failure or absent sessions.
+
 ## [1.5.1]
 
 The theme: **every way to connect over the network now has a way to authenticate** - including
@@ -113,6 +140,9 @@ with authentication switched off behave as in 1.5.0.
   rejected requests could push older records out.
 
 ### Fixed
+
+- **Builder lists include all visible builders** (follow-up to #174). The tool reports the full count and keeps its existing cursors on Komodo Core 2.3 and later.
+- **Server shell calls use isolated terminals by default** (#229). Silent server commands now time out after five minutes. An explicit terminal name keeps a shared, persistent shell.
 
 - **Clients that authenticate with HTTP Basic are served everywhere.** The token endpoint accepted
   `client_id`/`client_secret` in the `Authorization` header only for client credentials, and did

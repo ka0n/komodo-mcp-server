@@ -86,7 +86,7 @@ export class ConnectionError extends AppError {
   constructor(message: string, target: string, options: Omit<BaseErrorOptions, "code"> = {}) {
     super(message, {
       code: "CONNECTION_ERROR",
-      statusCode: HttpStatus.BAD_GATEWAY,
+      statusCode: options.statusCode ?? HttpStatus.BAD_GATEWAY,
       mcpCode: JsonRpcErrorCode.INTERNAL_ERROR,
       cause: options.cause,
       recoveryHint: options.recoveryHint,
@@ -285,7 +285,7 @@ export class ConfirmationRequiredError extends AppError {
     return new ConfirmationRequiredError(
       getAppMessage("CONFIRM_DECLINED", { outcome, action, resourceType, resourceId }),
       {
-        recoveryHint: "Retry the operation and approve the confirmation prompt (tick the confirm checkbox).",
+        recoveryHint: "Retry the operation and explicitly accept the confirmation prompt.",
         context: { action, resourceType, resourceId, outcome },
       },
     );

@@ -102,7 +102,7 @@ account instead, and this shared connection isn't used for them - see
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
 | `KOMODO_URL` | `komodo.url` | - | Komodo Core server URL (required) |
-| `KOMODO_API_TIMEOUT_MS` | `komodo.api_timeout_ms` | `30s` | Komodo API request timeout (duration or ms) |
+| `KOMODO_API_TIMEOUT_MS` | `komodo.api_timeout_ms` | `30s` | Per-request timeout for Komodo JSON API calls, including the response body (duration or ms) |
 
 ### Connection Credentials
 
@@ -350,7 +350,9 @@ Required when `MCP_TRANSPORT=https`:
 ### Destructive-Action Confirmation
 
 Destructive tools (deletes, destroy, prune, exec, procedure/action/sync runs) ask the human
-operator for approval via the MCP client's elicitation UI before executing.
+operator for approval via the MCP client's elicitation UI before executing. Framework 1.3.0
+sends an empty form and requires the operator to choose **Accept**. Declining, cancelling, or
+letting the prompt expire leaves the operation unapproved.
 
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
@@ -392,10 +394,18 @@ variables (`is_secret`) always have their value masked, alerter endpoint URLs/em
 path, and stacks' post-interpolation `deployed_config`/`deployed_contents` are removed entirely -
 in structured payloads, rendered text, offloaded JSON and exported TOML alike.
 
+With redaction enabled, TOML exports must successfully parse, apply the structural policy,
+serialize, and validate again before either inlining or resource registration. Any failure
+withholds the entire export with a generic error; raw TOML and parser details are not logged or
+returned. This local guard does not use the framework's best-effort TOML text fallback. Explicitly
+disabling redaction retains the existing raw-export behavior, including unvalidated TOML; the
+server does not silently override that operator setting.
+
 > **The TOML export is redacted, so it is not directly re-appliable.** `komodo_toml_export_*`
 > masks secret values, which means the exported file is meant for reading and diffing rather than
 > for feeding straight back through ResourceSync. The `secrets_masked` field in the result reports
-> whether redaction actually ran. Note that Komodo Core itself only masks variable values, and only
+> whether the configured redaction path ran. Arbitrary secrets can remain in the export.
+> Note that Komodo Core itself only masks variable values, and only
 > for non-admin callers - server passkeys and alerter webhook URLs are never masked upstream, so
 > switching redaction off means those leave the server in plaintext.
 
@@ -412,7 +422,8 @@ recognizable shape is not. Don't rely on this feature as the only line of defenc
 Limit which tools clients can use - to restrict what the assistant is allowed to do (e.g. read-only,
 no terminal access) and to keep the tool list small (fewer tokens). Category values are the
 `_meta.category` strings: `config`, `container`, `server`, `stack`, `deployment`, `build`, `repo`,
-`procedure`, `action`, `alerter`, `swarm`, `resource_sync`, `variable`, `update`, `terminal`, `user`.
+`procedure`, `action`, `alerter`, `swarm`, `resource_sync`, `variable`, `update`, `terminal`, `user`,
+`docker`, `builder`, `tag`, and `toml`.
 
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
@@ -420,20 +431,71 @@ no terminal access) and to keep the tool list small (fewer tokens). Category val
 | `MCP_TOOLS_EXCLUDED_CATEGORIES` | `tools.excluded_categories` | - | Remove whole categories |
 | `MCP_TOOLS_EXCLUDED_TOOLS` | `tools.excluded_tools` | - | Remove individual tools by name (e.g. `komodo_exec`) |
 
-These only **remove** tools (allowlist first, then the excludes) - removed tools are absent from
-`tools/list` and not callable. They never add tools or bypass authentication. An unknown category is
-ignored with a startup warning; a misspelled tool name simply has no effect.
+These filters remove tools, applying the allowlist first and then the exclusions. Removed tools
+are unavailable in `tools/list` and `tools/call`. An unknown name anywhere in either category list
+prevents startup, even when other entries are valid. An unknown individual tool name in
+`excluded_tools` has no effect.
+
+Before upgrading, verify every category name in your allowlist and exclusion list against the
+values above, including settings supplied through environment variables.
 
 ## Resources
 
-Large tool outputs (logs, inspect data) are offloaded to session-scoped `ephemeral://...` resource
-links, fetched out-of-band via `resources/read`, so they don't bloat the tool result inline.
+Offload-capable info, inspect, log, search-log, and TOML export tools share one delivery policy:
+
+- `link` (default): preserve v1.5.0 behavior, registering even small payloads as session-scoped
+  `ephemeral://...` resources fetched via `resources/read`.
+- `inline`: return the complete data in the existing inline output fields.
+- `auto`: inline payloads at or below the byte threshold; offload larger payloads.
+
+The threshold measures the **serialized candidate payload before redaction**, using UTF-8 bytes
+(including JSON indentation or log stream headers), rather than JavaScript string length. It does
+not count the summary, rendered text, or MCP envelope. TOML is structurally scrubbed before either
+delivery path, but its original byte count still drives auto selection. Both paths retain the
+framework's central scrub boundaries. The output schemas are unchanged.
+
+For both TOML export tools, `summary.bytes` consistently means UTF-8 bytes of the complete export
+**after configured redaction**, whether delivered inline or through `resources/read`. With
+redaction disabled it counts the original export. Large inline exports retain complete data in
+`structuredContent.toml`; rendered text shows a preview limited to the existing 4000-character
+display budget rather than duplicating the full export.
+
+`inline_full: true` overrides every mode. Missing sessions and resource-registration failures
+retain the existing complete-inline fallback. The threshold only limits automatic inline
+selection: explicit inline delivery and fallback can return larger results, as in v1.5.0. Rendered
+text keeps its existing display budget; complete data remains in structured output. No additional
+payload cache or byte-buffer copy is created; offloaded resources retain their TTLs, session
+isolation, and entry cap. This policy does not impose a new absolute payload-size limit.
+
+Resource-only JSON serialization and combined log strings are prepared lazily, after the helper
+rules out configured inline delivery, `inline_full`, and missing sessions. Auto mode still prepares
+content when needed to measure bytes; link/auto prepare it at most once. TOML's strict structural
+scrub always runs when enabled because its sanitized export is also the complete inline payload.
+
+Mode names are case-insensitive. Invalid modes and thresholds fail configuration validation.
+Thresholds must be positive safe integers (1 through 9007199254740991 bytes). Environment strings must contain only decimal digits;
+fractions (even ones JavaScript would round to integers), exponent/hex notation, signs, whitespace,
+zero, and overflow are rejected. Config-file values must be numeric positive safe integers.
+Validation applies even when the mode is `link` or `inline`. Environment variables override file
+settings, which override defaults.
 
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
+| `MCP_RESOURCE_RESPONSE_MODE` | `resources.response_mode` | `link` | Delivery policy: `link`, `inline`, or `auto` |
+| `MCP_RESOURCE_INLINE_THRESHOLD_BYTES` | `resources.inline_threshold_bytes` | `16384` | Inclusive UTF-8 payload-byte threshold in auto mode |
 | `MCP_RESOURCE_TTL_INFO` | `resources.ttl_info` | `15m` | TTL for info/inspect resources (duration or ms) |
 | `MCP_RESOURCE_TTL_LOGS` | `resources.ttl_logs` | `2m` | TTL for log resources (duration or ms) |
 | `MCP_RESOURCE_MAX_ENTRIES` | `resources.max_entries` | `1000` | Max ephemeral entries kept in memory (oldest evicted first) |
+
+For clients that have trouble consuming small `resource_link` responses, start with:
+
+```dotenv
+MCP_RESOURCE_RESPONSE_MODE=auto
+MCP_RESOURCE_INLINE_THRESHOLD_BYTES=16384
+```
+
+Large payloads still require working `resources/read` support. Use `inline_full: true` on an
+individual call when needed, or opt into `inline` mode if that client cannot consume links at all.
 
 ## Sessions
 
