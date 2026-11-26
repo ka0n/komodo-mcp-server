@@ -102,7 +102,7 @@ account instead, and this shared connection isn't used for them - see
 | Variable | Config Key | Default | Description |
 |----------|-----------|---------|-------------|
 | `KOMODO_URL` | `komodo.url` | - | Komodo Core server URL (required) |
-| `KOMODO_API_TIMEOUT_MS` | `komodo.api_timeout_ms` | `30s` | Komodo API request timeout (duration or ms) |
+| `KOMODO_API_TIMEOUT_MS` | `komodo.api_timeout_ms` | `30s` | Per-request timeout for Komodo JSON API calls, including the response body (duration or ms) |
 
 ### Connection Credentials
 

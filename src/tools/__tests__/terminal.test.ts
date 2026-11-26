@@ -1,10 +1,10 @@
 import "../../utils/polyfills.js";
 import assert from "node:assert/strict";
 import { after, before, mock, test } from "node:test";
-import { setImmediate } from "node:timers/promises";
+import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import type { ToolContext } from "mcp-server-framework";
 import { configureKomodoConnections, stopKomodoConnections } from "../../client.js";
-import { resolveKomodoConfig } from "../../config/env.js";
+import { config, resolveKomodoConfig } from "../../config/env.js";
 import { execTool } from "../terminal.js";
 
 interface TerminalRequest {
@@ -197,7 +197,6 @@ test("a failed execution retains the primary error and retries failed cleanup", 
 });
 
 test("an unacknowledged creation is deleted again if it completes after the first cleanup", async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
   let terminal: string | undefined;
   const active = new Set<string>();
   const requests: string[] = [];
@@ -216,7 +215,7 @@ test("an unacknowledged creation is deleted again if it completes after the firs
   assert.ok(terminal);
   assert.deepEqual(requests, ["/write/CreateTerminal", "/write/DeleteTerminal"]);
   active.add(terminal);
-  t.mock.timers.tick(5_000);
+  await delay(5_000, undefined, { signal: t.signal });
   assert.deepEqual(requests, ["/write/CreateTerminal", "/write/DeleteTerminal", "/write/DeleteTerminal"]);
   assert.equal(active.size, 0);
 });
@@ -250,3 +249,48 @@ test("cancellation during creation cleans up after Core acknowledges the termina
   await assert.rejects(run("quiet", controller.signal), /cancel/i);
   assert.deepEqual(requests, ["/write/CreateTerminal", "/write/DeleteTerminal"]);
 });
+
+test(
+  "terminal creation uses the JSON body deadline and cancellation still allows cleanup",
+  { timeout: 1_000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const originalTimeout = config.KOMODO_API_TIMEOUT_MS;
+    config.KOMODO_API_TIMEOUT_MS = 100;
+    t.after(() => {
+      config.KOMODO_API_TIMEOUT_MS = originalTimeout;
+    });
+    const caller = new AbortController();
+    let startCreation!: (signal: AbortSignal) => void;
+    const creating = new Promise<AbortSignal>((resolve) => {
+      startCreation = resolve;
+    });
+    const requests: string[] = [];
+    let name: string | undefined;
+    onRequest = (path, body, signal) => {
+      requests.push(path);
+      assert.ok(signal);
+      if (path === "/write/CreateTerminal") {
+        name = body.name;
+        startCreation(signal);
+        return pendingStream(signal, "{");
+      }
+      assert.equal(path, "/write/DeleteTerminal");
+      assert.ok(name);
+      assert.equal(body.terminal, name);
+      assert.equal(signal.aborted, false);
+      return Response.json({});
+    };
+    const result = assert.rejects(run("never executed", caller.signal), /cancel/i);
+    const creationSignal = await creating;
+    caller.abort();
+    assert.equal(creationSignal.aborted, false);
+    t.mock.timers.tick(config.KOMODO_API_TIMEOUT_MS);
+    await result;
+    assert.equal(creationSignal.aborted, true);
+    assert.deepEqual(requests, ["/write/CreateTerminal", "/write/DeleteTerminal"]);
+    t.mock.timers.tick(5_000);
+    await setImmediate();
+    assert.deepEqual(requests, ["/write/CreateTerminal", "/write/DeleteTerminal", "/write/DeleteTerminal"]);
+  },
+);

@@ -6,7 +6,8 @@ import { setImmediate } from "node:timers/promises";
 import { Types } from "komodo_client";
 import { AuthorizationError, OperationCancelledError } from "mcp-server-framework";
 import { configureKomodoConnections, stopKomodoConnections } from "../../client.js";
-import { ApiError } from "../../errors/index.js";
+import { config } from "../../config/index.js";
+import { ApiError, ConnectionError } from "../../errors/index.js";
 import { requireClient } from "../api-helpers.js";
 import { wrapExecuteAndPoll } from "../polling.js";
 
@@ -31,6 +32,40 @@ after(stopKomodoConnections);
 function execute(action = "fixture") {
   return requireClient().client.execute("RunAction", { action });
 }
+
+test("a stalled poll body hits the HTTP timeout before the workflow deadline", { timeout: 1_000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let pollStarted!: (signal: AbortSignal) => void;
+  const polling = new Promise<AbortSignal>((resolve) => {
+    pollStarted = resolve;
+  });
+  const fetch = t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+    if (new URL(url).pathname === "/execute/RunAction") return Response.json(inProgress);
+    assert.equal(new URL(url).pathname, "/read/GetUpdate");
+    const signal = init?.signal;
+    assert.ok(signal);
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+          pollStarted(signal);
+        },
+      }),
+    );
+  });
+  const caller = new AbortController();
+  const result = wrapExecuteAndPoll("run", () => execute(), caller.signal);
+  const rejected = assert.rejects(result, { name: ConnectionError.name, message: /run \(poll\) timed out/i });
+  await setImmediate();
+  t.mock.timers.tick(1_000);
+  const pollSignal = await polling;
+  t.mock.timers.tick(config.KOMODO_API_TIMEOUT_MS);
+  await rejected;
+  assert.equal(pollSignal.aborted, true);
+  assert.equal(caller.signal.aborted, false);
+  t.mock.timers.tick(deadlineMs);
+  assert.equal(fetch.mock.callCount(), 2);
+});
 
 for (const phase of ["submit", "GetUpdate", "progress", "final progress"] as const) {
   test(`the workflow deadline covers stalled ${phase}`, { timeout: 1_000 }, async (t) => {

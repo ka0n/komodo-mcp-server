@@ -321,6 +321,7 @@ export const execTool = defineTool({
   description: [
     "Execute a shell command on a Komodo target. `target` selects the context:",
     "server (server[, shell, terminal]) | container (server, container[, shell]) | deployment (deployment[, shell]) | stack_service (stack, service[, shell]).",
+    "Server calls use an isolated terminal by default. Pass a terminal name to reuse a shell.",
     "Output ≤50 KB; timeout 5 min.",
   ].join("\n"),
   input: execInputSchema,
